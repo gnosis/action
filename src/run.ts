@@ -68,8 +68,6 @@ export async function createGithubReleases({
   let releasedPackages: Package[] = []
 
   if (tool !== 'root') {
-    releasedPackages
-
     await Promise.all(
       releasedPackages.map((pkg) =>
         createRelease(octokit, {
@@ -83,20 +81,12 @@ export async function createGithubReleases({
       throw new Error(`No package found.` + 'This is probably a bug in the action, please open an issue')
     }
     let pkg = packages[0]
-    let newTagRegex = /New tag:/
 
-    for (let line of changesetPublishOutput.stdout.split('\n')) {
-      let match = line.match(newTagRegex)
-
-      if (match) {
-        releasedPackages.push(pkg)
-        await createRelease(octokit, {
-          pkg,
-          tagName: `v${pkg.packageJson.version}`,
-        })
-        break
-      }
-    }
+    releasedPackages.push(pkg)
+    await createRelease(octokit, {
+      pkg,
+      tagName: `v${pkg.packageJson.version}`,
+    })
   }
 
   if (releasedPackages.length) {
