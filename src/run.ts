@@ -34,8 +34,10 @@ const createRelease = async (
     })
   } catch (err) {
     // if we can't find a changelog, the user has probably disabled changelogs
-    if (err.code !== 'ENOENT') {
-      throw err
+    if (err instanceof Error) {
+      if (err.message !== 'ENOENT') {
+        throw err
+      }
     }
   }
 }
@@ -61,33 +63,12 @@ export async function createGithubReleases({
   cwd = process.cwd(),
 }: PublishOptions): Promise<PublishResult> {
   let octokit = github.getOctokit(githubToken)
-  let [publishCommand, ...publishArgs] = script.split(/\s+/)
-
-  let changesetPublishOutput = await execWithOutput(publishCommand, publishArgs, { cwd })
-
-  await gitUtils.pushTags()
 
   let { packages, tool } = await getPackages(cwd)
   let releasedPackages: Package[] = []
 
   if (tool !== 'root') {
-    let newTagRegex = /New tag:\s+(@[^/]+\/[^@]+|[^/]+)@([^\s]+)/
-    let packagesByName = new Map(packages.map((x) => [x.packageJson.name, x]))
-
-    for (let line of changesetPublishOutput.stdout.split('\n')) {
-      let match = line.match(newTagRegex)
-      if (match === null) {
-        continue
-      }
-      let pkgName = match[1]
-      let pkg = packagesByName.get(pkgName)
-      if (pkg === undefined) {
-        throw new Error(
-          `Package "${pkgName}" not found.` + 'This is probably a bug in the action, please open an issue',
-        )
-      }
-      releasedPackages.push(pkg)
-    }
+    releasedPackages
 
     await Promise.all(
       releasedPackages.map((pkg) =>
