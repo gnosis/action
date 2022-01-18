@@ -76,8 +76,8 @@ export async function createGithubReleases({
         tag: `${pkg.packageJson.name}@${pkg.packageJson.version}`,
       })
     } catch (err) {
-      console.error(err)
       if (err.status === 404) {
+        console.log(`adding ${pkg.packageJson.name}@${pkg.packageJson.version} to release list`)
         packagesToRelease.push(pkg)
       }
     }
