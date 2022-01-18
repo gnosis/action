@@ -70,15 +70,17 @@ export async function createGithubReleases({
   // The releases need to be named "@package-name@version"
   let packagesToRelease: Package[] = []
   for (let pkg of packages) {
-    let release = await octokit.repos.getReleaseByTag({
-      ...github.context.repo,
-      tag: `${pkg.packageJson.name}@${pkg.packageJson.version}`,
-    })
-    if (release.status === 200) {
-      // we already have a release for this version
-      continue
+    try {
+      await octokit.repos.getReleaseByTag({
+        ...github.context.repo,
+        tag: `${pkg.packageJson.name}@${pkg.packageJson.version}`,
+      })
+    } catch (err) {
+      console.error(err)
+      if (err.status === 404) {
+        packagesToRelease.push(pkg)
+      }
     }
-    packagesToRelease.push(pkg)
   }
 
   if (tool !== 'root') {
