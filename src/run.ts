@@ -63,13 +63,27 @@ export async function createGithubReleases({
   cwd = process.cwd(),
 }: PublishOptions): Promise<PublishResult> {
   let octokit = github.getOctokit(githubToken)
-
   let { packages, tool } = await getPackages(cwd)
-  let releasedPackages: Package[] = []
+
+  // To figure out for what package versions we need to create a release, we iterate over all packages
+  // and see if there's a corresponding github release for that version. If there is, we skip it.
+  // The releases need to be named "@package-name@version"
+  let packagesToRelease: Package[] = []
+  for (let pkg of packages) {
+    let release = await octokit.repos.getReleaseByTag({
+      ...github.context.repo,
+      tag: `${pkg.packageJson.name}@${pkg.packageJson.version}`,
+    })
+    if (release.status === 200) {
+      // we already have a release for this version
+      continue
+    }
+    packagesToRelease.push(pkg)
+  }
 
   if (tool !== 'root') {
     await Promise.all(
-      releasedPackages.map((pkg) =>
+      packagesToRelease.map((pkg) =>
         createRelease(octokit, {
           pkg,
           tagName: `${pkg.packageJson.name}@${pkg.packageJson.version}`,
@@ -82,17 +96,17 @@ export async function createGithubReleases({
     }
     let pkg = packages[0]
 
-    releasedPackages.push(pkg)
+    packagesToRelease.push(pkg)
     await createRelease(octokit, {
       pkg,
       tagName: `v${pkg.packageJson.version}`,
     })
   }
 
-  if (releasedPackages.length) {
+  if (packagesToRelease.length) {
     return {
       published: true,
-      publishedPackages: releasedPackages.map((pkg) => ({
+      publishedPackages: packagesToRelease.map((pkg) => ({
         name: pkg.packageJson.name,
         version: pkg.packageJson.version,
       })),

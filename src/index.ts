@@ -41,11 +41,11 @@ const getOptionalInput = (name: string) => core.getInput(name) || undefined
   // If the action is manually dispatched, then it's time to publish releases to github
   let manuallyDispatched = github.context.eventName === 'workflow_dispatch'
   switch (true) {
-    case !hasChangesets:
-      console.log('No changesets found')
+    default:
+      console.log("The action doesn't know what to do.. No changesets found")
       return
     case !hasChangesets && manuallyDispatched: {
-      console.log('No changesets found, attempting to publish any unpublished packages to npm')
+      console.log('No changesets found, attempting to publish any unpublished releases to GitHub')
 
       const result = await createGithubReleases({
         githubToken,
