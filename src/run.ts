@@ -189,33 +189,32 @@ export async function runVersion({
           ? `
       ⚠️⚠️⚠️⚠️⚠️⚠️
 
-      \`${branch}\` is currently in **pre mode** so this branch has prereleases rather than normal releases. If you want to exit prereleases, run \`changeset pre exit\` on \`${branch}\`.
+      ${branch} is currently in **pre mode** so this branch has prereleases rather than normal releases. If you want to exit prereleases, run \`changeset pre exit\` on \`${branch}\`.
 
       ⚠️⚠️⚠️⚠️⚠️⚠️
       `
           : ""
       }
-      
-      # Releases
-      
-      ${(
-        await Promise.all(
-          changedPackages.map(async (pkg) => {
-            let changelogContents = await fs.readFile(path.join(pkg.dir, "CHANGELOG.md"), "utf8");
+  # Releases
+  
+  ${(
+    await Promise.all(
+      changedPackages.map(async (pkg) => {
+        let changelogContents = await fs.readFile(path.join(pkg.dir, "CHANGELOG.md"), "utf8");
 
-            let entry = getChangelogEntry(changelogContents, pkg.packageJson.version);
-            return {
-              highestLevel: entry.highestLevel,
-              private: !!pkg.packageJson.private,
-              content: `## ${pkg.packageJson.name}@${pkg.packageJson.version}\n\n` + entry.content,
-            };
-          }),
-        )
-      )
-        .filter((x) => x)
-        .sort(sortTheThings)
-        .map((x) => x.content)
-        .join("\n ")}`;
+        let entry = getChangelogEntry(changelogContents, pkg.packageJson.version);
+        return {
+          highestLevel: entry.highestLevel,
+          private: !!pkg.packageJson.private,
+          content: `## ${pkg.packageJson.name}@${pkg.packageJson.version}\n\n` + entry.content,
+        };
+      }),
+    )
+  )
+    .filter((x) => x)
+    .sort(sortTheThings)
+    .map((x) => x.content)
+    .join("\n ")}`;
   })();
 
   const finalPrTitle = `${prTitle}${!!preState ? ` (${preState.tag})` : ""}`;
