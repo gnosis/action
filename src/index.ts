@@ -22,7 +22,6 @@ const getOptionalInput = (name: string) => core.getInput(name) || undefined;
     await gitUtils.setupUser();
   }
 
-  console.log(core);
   console.log("setting GitHub credentials");
   await fs.writeFile(
     `${process.env.HOME}/.netrc`,
