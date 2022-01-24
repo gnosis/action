@@ -47,6 +47,5 @@
   },
   "husky": {
     "hooks": {}
-  },
-  "prettier": {}
+  }
 }

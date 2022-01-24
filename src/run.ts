@@ -6,7 +6,6 @@ import path from "path";
 import * as semver from "semver";
 import {
   getChangelogEntry,
-  execWithOutput,
   getChangedPackages,
   sortTheThings,
   getVersionsByDirectory,
@@ -17,7 +16,7 @@ import resolveFrom from "resolve-from";
 
 const createRelease = async (
   octokit: ReturnType<typeof github.getOctokit>,
-  { pkg, tagName }: { pkg: Package; tagName: string }
+  { pkg, tagName }: { pkg: Package; tagName: string },
 ) => {
   try {
     let changelogFileName = path.join(pkg.dir, "CHANGELOG.md");
@@ -29,7 +28,7 @@ const createRelease = async (
       // we can find a changelog but not the entry for this version
       // if this is true, something has probably gone wrong
       throw new Error(
-        `Could not find changelog entry for ${pkg.packageJson.name}@${pkg.packageJson.version}`
+        `Could not find changelog entry for ${pkg.packageJson.name}@${pkg.packageJson.version}`,
       );
     }
 
@@ -42,14 +41,15 @@ const createRelease = async (
     });
   } catch (err) {
     // if we can't find a changelog, the user has probably disabled changelogs
-    if (err.code !== "ENOENT") {
-      throw err;
+    if (err instanceof Error) {
+      if (err.message !== "ENOENT") {
+        throw err;
+      }
     }
   }
 };
 
 type PublishOptions = {
-  script: string;
   githubToken: string;
   cwd?: string;
 };
@@ -65,81 +65,59 @@ type PublishResult =
       published: false;
     };
 
-export async function runPublish({
-  script,
+export async function createGithubReleases({
   githubToken,
   cwd = process.cwd(),
 }: PublishOptions): Promise<PublishResult> {
   let octokit = github.getOctokit(githubToken);
-  let [publishCommand, ...publishArgs] = script.split(/\s+/);
-
-  let changesetPublishOutput = await execWithOutput(
-    publishCommand,
-    publishArgs,
-    { cwd }
-  );
-
-  await gitUtils.pushTags();
-
   let { packages, tool } = await getPackages(cwd);
-  let releasedPackages: Package[] = [];
 
-  if (tool !== "root") {
-    let newTagRegex = /New tag:\s+(@[^/]+\/[^@]+|[^/]+)@([^\s]+)/;
-    let packagesByName = new Map(packages.map((x) => [x.packageJson.name, x]));
-
-    for (let line of changesetPublishOutput.stdout.split("\n")) {
-      let match = line.match(newTagRegex);
-      if (match === null) {
-        continue;
-      }
-      let pkgName = match[1];
-      let pkg = packagesByName.get(pkgName);
-      if (pkg === undefined) {
-        throw new Error(
-          `Package "${pkgName}" not found.` +
-            "This is probably a bug in the action, please open an issue"
-        );
-      }
-      releasedPackages.push(pkg);
-    }
-
-    await Promise.all(
-      releasedPackages.map((pkg) =>
-        createRelease(octokit, {
-          pkg,
-          tagName: `${pkg.packageJson.name}@${pkg.packageJson.version}`,
-        })
-      )
-    );
-  } else {
-    if (packages.length === 0) {
-      throw new Error(
-        `No package found.` +
-          "This is probably a bug in the action, please open an issue"
-      );
-    }
-    let pkg = packages[0];
-    let newTagRegex = /New tag:/;
-
-    for (let line of changesetPublishOutput.stdout.split("\n")) {
-      let match = line.match(newTagRegex);
-
-      if (match) {
-        releasedPackages.push(pkg);
-        await createRelease(octokit, {
-          pkg,
-          tagName: `v${pkg.packageJson.version}`,
-        });
-        break;
+  // To figure out for what package versions we need to create a release, we iterate over all packages
+  // and see if there's a corresponding github release for that version. If there is, we skip it.
+  // The releases need to be named "@package-name@version"
+  let packagesToRelease: Package[] = [];
+  for (let pkg of packages) {
+    try {
+      await octokit.repos.getReleaseByTag({
+        ...github.context.repo,
+        tag: `${pkg.packageJson.name}@${pkg.packageJson.version}`,
+      });
+    } catch (err) {
+      if (err.status === 404) {
+        console.log(`adding ${pkg.packageJson.name}@${pkg.packageJson.version} to release list`);
+        packagesToRelease.push(pkg);
       }
     }
   }
 
-  if (releasedPackages.length) {
+  if (tool !== "root") {
+    await Promise.all(
+      packagesToRelease.map((pkg) =>
+        createRelease(octokit, {
+          pkg,
+          tagName: `${pkg.packageJson.name}@${pkg.packageJson.version}`,
+        }),
+      ),
+    );
+  } else {
+    if (packages.length === 0) {
+      throw new Error(
+        `No package found.` + "This is probably a bug in the action, please open an issue",
+      );
+    }
+    let pkg = packages[0];
+
+    packagesToRelease.push(pkg);
+    await createRelease(octokit, {
+      pkg,
+      tagName: `v${pkg.packageJson.version}`,
+    });
+  }
+
+  if (packagesToRelease.length) {
     return {
       published: true,
-      publishedPackages: releasedPackages.map((pkg) => ({
+      publishedPackages: packagesToRelease.map((pkg) => ({
         name: pkg.packageJson.name,
         version: pkg.packageJson.version,
       })),
@@ -154,9 +132,7 @@ const requireChangesetsCliPkgJson = (cwd: string) => {
     return require(resolveFrom(cwd, "@changesets/cli/package.json"));
   } catch (err) {
     if (err && err.code === "MODULE_NOT_FOUND") {
-      throw new Error(
-        `Have you forgotten to install \`@changesets/cli\` in "${cwd}"?`
-      );
+      throw new Error(`Have you forgotten to install \`@changesets/cli\` in "${cwd}"?`);
     }
     throw err;
   }
@@ -177,7 +153,6 @@ export async function runVersion({
   cwd = process.cwd(),
   prTitle = "Version Packages",
   commitMessage = "Version Packages",
-  hasPublishScript = false,
 }: VersionOptions) {
   let repo = `${github.context.repo.owner}/${github.context.repo.repo}`;
   let branch = github.context.ref.replace("refs/heads/", "");
@@ -195,9 +170,7 @@ export async function runVersion({
     await exec(versionCommand, versionArgs, { cwd });
   } else {
     let changesetsCliPkgJson = requireChangesetsCliPkgJson(cwd);
-    let cmd = semver.lt(changesetsCliPkgJson.version, "2.0.0")
-      ? "bump"
-      : "version";
+    let cmd = semver.lt(changesetsCliPkgJson.version, "2.0.0") ? "bump" : "version";
     await exec("node", [resolveFrom(cwd, "@changesets/cli/bin.js"), cmd], {
       cwd,
     });
@@ -210,61 +183,45 @@ export async function runVersion({
   let changedPackages = await getChangedPackages(cwd, versionsByDirectory);
 
   let prBodyPromise = (async () => {
-    return (
-      `This PR was opened by the [Changesets release](https://github.com/changesets/action) GitHub action. When you're ready to do a release, you can merge this and ${
-        hasPublishScript
-          ? `the packages will be published to npm automatically`
-          : `publish to npm yourself or [setup this action to publish automatically](https://github.com/changesets/action#with-publishing)`
-      }. If you're not ready to do a release yet, that's fine, whenever you add more changesets to ${branch}, this PR will be updated.
-${
-  !!preState
-    ? `
-⚠️⚠️⚠️⚠️⚠️⚠️
+    return `This PR was opened by the [Changesets](https://github.com/gnosis/changesets-action-github-releases) GitHub action. When you're ready to do a release, you can merge this and publish to npm yourself. If you're not ready to do a release yet, that's fine, whenever you add more changesets to ${branch}, this PR will be updated.
+      ${
+        !!preState
+          ? `
+      ⚠️⚠️⚠️⚠️⚠️⚠️
 
-\`${branch}\` is currently in **pre mode** so this branch has prereleases rather than normal releases. If you want to exit prereleases, run \`changeset pre exit\` on \`${branch}\`.
+      ${branch} is currently in **pre mode** so this branch has prereleases rather than normal releases. If you want to exit prereleases, run \`changeset pre exit\` on \`${branch}\`.
 
-⚠️⚠️⚠️⚠️⚠️⚠️
-`
-    : ""
-}
-# Releases
-` +
-      (
-        await Promise.all(
-          changedPackages.map(async (pkg) => {
-            let changelogContents = await fs.readFile(
-              path.join(pkg.dir, "CHANGELOG.md"),
-              "utf8"
-            );
+      ⚠️⚠️⚠️⚠️⚠️⚠️
+      `
+          : ""
+      }
+  # Releases
+  
+  ${(
+    await Promise.all(
+      changedPackages.map(async (pkg) => {
+        let changelogContents = await fs.readFile(path.join(pkg.dir, "CHANGELOG.md"), "utf8");
 
-            let entry = getChangelogEntry(
-              changelogContents,
-              pkg.packageJson.version
-            );
-            return {
-              highestLevel: entry.highestLevel,
-              private: !!pkg.packageJson.private,
-              content:
-                `## ${pkg.packageJson.name}@${pkg.packageJson.version}\n\n` +
-                entry.content,
-            };
-          })
-        )
-      )
-        .filter((x) => x)
-        .sort(sortTheThings)
-        .map((x) => x.content)
-        .join("\n ")
-    );
+        let entry = getChangelogEntry(changelogContents, pkg.packageJson.version);
+        return {
+          highestLevel: entry.highestLevel,
+          private: !!pkg.packageJson.private,
+          content: `## ${pkg.packageJson.name}@${pkg.packageJson.version}\n\n` + entry.content,
+        };
+      }),
+    )
+  )
+    .filter((x) => x)
+    .sort(sortTheThings)
+    .map((x) => x.content)
+    .join("\n ")}`;
   })();
 
   const finalPrTitle = `${prTitle}${!!preState ? ` (${preState.tag})` : ""}`;
 
   // project with `commit: true` setting could have already committed files
   if (!(await gitUtils.checkIfClean())) {
-    const finalCommitMessage = `${commitMessage}${
-      !!preState ? ` (${preState.tag})` : ""
-    }`;
+    const finalCommitMessage = `${commitMessage}${!!preState ? ` (${preState.tag})` : ""}`;
     await gitUtils.commitAll(finalCommitMessage);
   }
 

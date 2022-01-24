@@ -1,7 +1,8 @@
 import * as core from "@actions/core";
+import * as github from "@actions/github";
 import fs from "fs-extra";
 import * as gitUtils from "./gitUtils";
-import { runPublish, runVersion } from "./run";
+import { createGithubReleases, runVersion } from "./run";
 import readChangesetState from "./readChangesetState";
 
 const getOptionalInput = (name: string) => core.getInput(name) || undefined;
@@ -14,7 +15,7 @@ const getOptionalInput = (name: string) => core.getInput(name) || undefined;
     return;
   }
 
-  let setupGitUser = core.getBooleanInput('setupGitUser');
+  let setupGitUser = core.getBooleanInput("setupGitUser");
 
   if (setupGitUser) {
     console.log("setting git user");
@@ -24,68 +25,33 @@ const getOptionalInput = (name: string) => core.getInput(name) || undefined;
   console.log("setting GitHub credentials");
   await fs.writeFile(
     `${process.env.HOME}/.netrc`,
-    `machine github.com\nlogin github-actions[bot]\npassword ${githubToken}`
+    `machine github.com\nlogin github-actions[bot]\npassword ${githubToken}`,
   );
 
   let { changesets } = await readChangesetState();
 
-  let publishScript = core.getInput("publish");
   let hasChangesets = changesets.length !== 0;
-  let hasPublishScript = !!publishScript;
 
   core.setOutput("published", "false");
   core.setOutput("publishedPackages", "[]");
   core.setOutput("hasChangesets", String(hasChangesets));
 
+  // If the action is manually dispatched, then it's time to publish releases to github
+  let manuallyDispatched = github.context.eventName === "workflow_dispatch";
   switch (true) {
-    case !hasChangesets && !hasPublishScript:
-      console.log("No changesets found");
+    default:
+      console.log("The action doesn't know what to do.. No changesets found");
       return;
-    case !hasChangesets && hasPublishScript: {
-      console.log(
-        "No changesets found, attempting to publish any unpublished packages to npm"
-      );
+    case !hasChangesets && manuallyDispatched: {
+      console.log("No changesets found, attempting to publish any unpublished releases to GitHub");
 
-      let userNpmrcPath = `${process.env.HOME}/.npmrc`;
-      if (fs.existsSync(userNpmrcPath)) {
-        console.log("Found existing user .npmrc file");
-        const userNpmrcContent = await fs.readFile(userNpmrcPath, "utf8");
-        const authLine = userNpmrcContent.split("\n").find((line) => {
-          // check based on https://github.com/npm/cli/blob/8f8f71e4dd5ee66b3b17888faad5a7bf6c657eed/test/lib/adduser.js#L103-L105
-          return /^\s*\/\/registry\.npmjs\.org\/:[_-]authToken=/i.test(line);
-        });
-        if (authLine) {
-          console.log(
-            "Found existing auth token for the npm registry in the user .npmrc file"
-          );
-        } else {
-          console.log(
-            "Didn't find existing auth token for the npm registry in the user .npmrc file, creating one"
-          );
-          fs.appendFileSync(
-            userNpmrcPath,
-            `\n//registry.npmjs.org/:_authToken=${process.env.NPM_TOKEN}\n`
-          );
-        }
-      } else {
-        console.log("No user .npmrc file found, creating one");
-        fs.writeFileSync(
-          userNpmrcPath,
-          `//registry.npmjs.org/:_authToken=${process.env.NPM_TOKEN}\n`
-        );
-      }
-
-      const result = await runPublish({
-        script: publishScript,
+      const result = await createGithubReleases({
         githubToken,
       });
 
       if (result.published) {
         core.setOutput("published", "true");
-        core.setOutput(
-          "publishedPackages",
-          JSON.stringify(result.publishedPackages)
-        );
+        core.setOutput("publishedPackages", JSON.stringify(result.publishedPackages));
       }
       return;
     }
@@ -95,7 +61,6 @@ const getOptionalInput = (name: string) => core.getInput(name) || undefined;
         githubToken,
         prTitle: getOptionalInput("title"),
         commitMessage: getOptionalInput("commit"),
-        hasPublishScript,
       });
       return;
   }
